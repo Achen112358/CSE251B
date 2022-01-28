@@ -294,7 +294,7 @@ class Layer():
     def update(self, lr, l2_penalty = 0, momentum = False, momentum_gamma = 1):
         
         # l2 penalty
-        d_w  = self.d_w + l2_penalty + self.w
+        d_w  = self.d_w + l2_penalty * self.w
         
         #momentum
         d_w = momentum * d_w + (1-momentum) * self.d_w_old 
