@@ -288,8 +288,8 @@ class Layer():
         batch_size = self.x.shape[0]
 
         self.d_x = np.matmul(delta, self.w.T)
-        self.d_w = -np.matmul(self.x.T, delta) / (batch_size * 10)
-        self.d_b = -np.mean(delta, axis=0) / 10
+        self.d_w = np.matmul(self.x.T, delta) / (batch_size * 10)
+        self.d_b = np.mean(delta, axis=0) / 10
 
         return self.d_x
     
@@ -386,7 +386,7 @@ class Neuralnetwork():
         TODO: Implement backpropagation here.
         Call backward methods of individual layers.
         '''
-        delta = -(self.y - self.targets)
+        delta = self.y - self.targets
         for layer in self.layers[::-1]:
             delta = layer.backward(delta)
             
