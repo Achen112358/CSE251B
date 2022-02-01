@@ -15,6 +15,7 @@ import numpy as np
 import pickle
 import random
 import time
+from sklearn.metrics import confusion_matrix
 
 def load_config(path):
     """
@@ -142,7 +143,7 @@ class Activation():
         """
         Compute the forward pass.
         """
-        self.x = a.copy()
+        self.x = a
         if self.activation_type == "sigmoid":
             return self.sigmoid(a)
 
@@ -248,7 +249,7 @@ class Layer():
         Define the architecture and create placeholder.
         """
         np.random.seed(42)
-        self.w = np.random.randn(in_units, out_units)    # Declare the Weight matrix
+        self.w = np.random.randn(in_units, out_units)   # Declare the Weight matrix
         self.b = np.random.randn(1, out_units)    # Create a placeholder for Bias
         self.x = None    # Save the input to forward in this
         self.a = None    # Save the output of forward pass in this (without activation)
@@ -259,7 +260,8 @@ class Layer():
         
         self.d_w_old = 0
         self.d_b_old = 0
-        
+        self.w_best = None
+        self.b_best= None
 
     def __call__(self, x):
         """
@@ -286,24 +288,33 @@ class Layer():
         batch_size = self.x.shape[0]
 
         self.d_x = np.matmul(delta, self.w.T)
-        self.d_w = np.matmul(self.x.T, delta) / (batch_size * 10)
-        self.d_b = np.mean(delta, axis=0) / 10
+        self.d_w = -np.matmul(self.x.T, delta) / (batch_size * 10)
+        self.d_b = -np.mean(delta, axis=0) / 10
 
         return self.d_x
     
-    def update(self, lr, l2_penalty = 0, momentum = False, momentum_gamma = 1):
+    def update(self, lr, l2_penalty = 0, momentum = False, momentum_gamma = 0.9):
         
         # l2 penalty
         d_w  = self.d_w + l2_penalty * self.w
         
         #momentum
-        d_w = momentum * d_w + (1-momentum) * self.d_w_old 
-        d_b = momentum * self.d_b + (1-momentum) * self.d_b_old
-        self.d_w_old = d_w
-        self.d_b_old = d_b
+        if momentum:
+            d_w = (1-momentum_gamma) * d_w +  momentum_gamma * self.d_w_old 
+            d_b = (1-momentum_gamma) * self.d_b + momentum_gamma * self.d_b_old
+            self.d_w_old = d_w
+            self.d_b_old = d_b
         
         self.w -= lr * d_w
         self.b -= lr * d_b
+    
+    def store(self):
+        self.w_best = self.w
+        self.b_best = self.b
+
+    def load(self):
+        self.w = self.w_best
+        self.b = self.b_best
         
 
 class Neuralnetwork():
@@ -375,7 +386,7 @@ class Neuralnetwork():
         TODO: Implement backpropagation here.
         Call backward methods of individual layers.
         '''
-        delta = self.y - self.targets
+        delta = -(self.y - self.targets)
         for layer in self.layers[::-1]:
             delta = layer.backward(delta)
             
@@ -383,6 +394,16 @@ class Neuralnetwork():
         for layer in self.layers:
             if isinstance(layer, Layer):
                 layer.update(lr=self.lr, l2_penalty = self.l2_penalty, momentum = self.momentum, momentum_gamma = self.momentum_gamma)
+                
+    def store(self):
+        for layer in self.layers:
+            if isinstance(layer, Layer):
+                layer.store()
+
+    def load(self):
+        for layer in self.layers:
+            if isinstance(layer, Layer):
+                layer.load()
                 
     def predict_acc(self, x, targets):
         y = self.forward(x)
@@ -403,14 +424,12 @@ def train(model, x_train, y_train, x_valid, y_valid, config):
     Implement Early Stopping.
     Use config to set parameters for training like learning rate, momentum, etc.
     """
-
-    early_stop_En = config['early_stop']
-    epoch_threshold = config['early_stop_epoch']
     
     start_time = time.time()
         
-    best_acc = 0.0
+    best_loss = 1000.0
     patient = 0
+    final_train_loss, final_train_acc, final_valid_loss, final_valid_acc = [], [], [], []
     for t in range(config['epochs']):
         train_loss_batch, train_accuracy_batch = [], []
         for x, y in generate_minibatches((x_train, y_train), batch_size=config['batch_size']):
@@ -421,26 +440,30 @@ def train(model, x_train, y_train, x_valid, y_valid, config):
             acc = model.predict_acc(x, y)
             train_accuracy_batch.append(acc)
             
-        
         train_loss = np.mean(np.array(train_loss_batch))
         train_accuracy = np.mean(np.array(train_accuracy_batch))
+        final_train_loss.append(train_loss)
+        final_train_acc.append(train_accuracy)
+        
         print("Epoch {}: Time cost {}s. Training loss is {}. Training Accuracy is {}.".format(t + 1, round(time.time() - start_time, 2), round(train_loss,4), round(train_accuracy, 4)))
         
+        valid_loss = model.forward(x_valid, targets=y_valid)[1]
+        valid_acc = model.predict_acc(x_valid, targets=y_valid)
+        final_valid_loss.append(valid_loss)
+        final_valid_acc.append(valid_acc)
         
-        if (t+1) % 10 == 0:
-            valid_loss = model.forward(x_valid, targets=y_valid)[1]
-            valid_acc = model.predict_acc(x_valid, targets=y_valid)
-            print('Begin Validation! Time cost {}s. Validation loss is {}. Validation Accuracy is {}.'.format(round(time.time() - start_time, 2), round(valid_loss,4), round(valid_acc,4)))
-            if valid_acc > best_acc:
-                best_acc = valid_acc
-                patient = 0
-            else:
-                patient += 1
+        print('Begin Validation! Time cost {}s. Validation loss is {}. Validation Accuracy is {}.'.format(round(time.time() - start_time, 2), round(valid_loss,4), round(valid_acc, 4)))
+        if valid_loss < best_loss:
+            model.store()
+            best_loss = valid_loss
+            patient = 0
+        else:
+            patient += 1
+        if patient > config['early_stop_epoch']:
+            break
             
-            if patient > config['early_stop_epoch']:
-                break
-
-
+    return final_train_loss, final_train_acc, final_valid_loss, final_valid_acc
+    
 def test(model, X_test, y_test):
     """
     TODO: Calculate and return the accuracy on the test set.
@@ -460,6 +483,7 @@ if __name__ == "__main__":
     # Load the data
     path = "./data/"
     X, y, X_test, y_test = load_data(path)
+    X, y = shuffle((X,y))
     X_train, X_valid = X[:45000], X[45000:]
     y_train, y_valid = y[:45000], y[45000:]
 
